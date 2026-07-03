@@ -1,37 +1,58 @@
 <script setup>
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { BookOpen, Database, RotateCw, SlidersHorizontal, X } from "lucide-vue-next";
+import { BookOpen, Database, Orbit, RotateCw, SlidersHorizontal, X } from "lucide-vue-next";
 
 import AlgorithmChart from "../components/AlgorithmChart.vue";
 import DatasetPanel from "../components/DatasetPanel.vue";
-import { fetchAlgorithm, fetchDataset, fetchDatasets, runAlgorithm } from "../services/api";
-import { fallbackDatasets, tabs } from "../services/catalog";
+import MetricsPanel from "../components/MetricsPanel.vue";
+import { evaluateAlgorithm, fetchAlgorithm, fetchDatasets, runVisualization } from "../services/api";
+import { fallbackAlgorithms, fallbackDatasets } from "../services/catalog";
 
 const route = useRoute();
 const activeTab = ref("principle");
+
+// 直接在前端定义独立展示用的数据分布模式
+const patterns = [
+  { id: "blobs", name: "分布：线性可分 (Blobs)" },
+  { id: "moons", name: "分布：半月形非线性 (Moons)" },
+  { id: "circles", name: "分布：环形包裹非线性 (Circles)" }
+];
+const selectedPattern = ref("blobs");
 const datasets = ref(fallbackDatasets);
 const selectedDataset = ref("iris");
-const datasetDetail = ref(null);
+
 const algorithmInfo = ref(null);
-const result = ref(null);
+const visualizationResult = ref(null);
+const evaluationResult = ref(null);
 const loading = ref(false);
 const error = ref("");
+const principleError = ref("");
+const visualizationError = ref("");
+const evaluationError = ref("");
 const showPrincipleDialog = ref(false);
-const featureIndices = ref([2, 3]);
 const hyperparameters = ref({});
 
 const algorithmId = computed(() => route.params.id);
-const algorithm = computed(() => algorithmInfo.value || { principle: [] });
-const dataset = computed(() => result.value?.dataset || datasetDetail.value);
-const featureOptions = computed(() => datasetDetail.value?.fields || dataset.value?.fields || []);
+const fallbackAlgorithm = computed(() => fallbackAlgorithms.find((item) => item.id === algorithmId.value));
+const algorithm = computed(() => mergeAlgorithmInfo(algorithmInfo.value, fallbackAlgorithm.value));
 const parameterControls = computed(() => controlsFor(algorithmId.value));
+const dataset = computed(() => evaluationResult.value?.dataset);
 
-function defaultFeatures(datasetId, detail) {
-  const fields = detail?.fields || [];
-  const candidate = datasetId === "wine" ? [6, 12] : [2, 3];
-  if (candidate.every((index) => index < fields.length)) return candidate;
-  return [0, Math.min(1, Math.max(fields.length - 1, 0))];
+function mergeAlgorithmInfo(remote, fallback) {
+  if (!remote && !fallback) return { principle: [], deepDive: [] };
+  const local = fallback || {};
+  const api = remote || {};
+  const apiPrinciple = Array.isArray(api.principle) ? api.principle : [];
+  const localPrinciple = Array.isArray(local.principle) ? local.principle : [];
+  const apiDeepDive = Array.isArray(api.deepDive) ? api.deepDive : [];
+  const localDeepDive = Array.isArray(local.deepDive) ? local.deepDive : [];
+  return {
+    ...local,
+    ...api,
+    principle: apiPrinciple.length >= 5 ? apiPrinciple : localPrinciple,
+    deepDive: apiDeepDive.length >= 4 ? apiDeepDive : localDeepDive,
+  };
 }
 
 function defaultHyperparameters(id) {
@@ -84,47 +105,68 @@ function controlsFor(id) {
 }
 
 async function loadAlgorithmInfo() {
+  principleError.value = "";
   try {
     algorithmInfo.value = await fetchAlgorithm(algorithmId.value);
   } catch (apiError) {
+    principleError.value = "算法原理暂未加载，请确认后端算法接口可用。";
     algorithmInfo.value = null;
   }
 }
 
-async function loadDatasetDetail() {
-  datasetDetail.value = await fetchDataset(selectedDataset.value);
-  featureIndices.value = defaultFeatures(selectedDataset.value, datasetDetail.value);
-}
-
-async function loadRun() {
-  loading.value = true;
-  error.value = "";
+async function loadVisualization(options = {}) {
+  const manageLoading = options.manageLoading !== false;
+  if (manageLoading) loading.value = true;
+  visualizationError.value = "";
   try {
-    result.value = await runAlgorithm(algorithmId.value, {
-      datasetId: selectedDataset.value,
-      featureIndices: featureIndices.value.map((item) => Number(item)),
+    visualizationResult.value = await runVisualization(algorithmId.value, {
+      pattern: selectedPattern.value,
       hyperparameters: { ...hyperparameters.value },
     });
   } catch (apiError) {
-    error.value = "后端接口暂不可用，或当前参数组合无法生成执行过程。";
-    result.value = null;
+    visualizationError.value = "独立可视化数据暂未加载，请确认后端可视化接口可用。";
+    visualizationResult.value = null;
   } finally {
-    loading.value = false;
+    if (manageLoading) loading.value = false;
   }
 }
 
-async function reloadAll({ resetParameters = false, resetFeatures = false } = {}) {
-  if (resetParameters) hyperparameters.value = defaultHyperparameters(algorithmId.value);
-  if (resetFeatures || !datasetDetail.value) await loadDatasetDetail();
-  await loadAlgorithmInfo();
-  await loadRun();
+async function loadEvaluation(options = {}) {
+  const manageLoading = options.manageLoading !== false;
+  if (manageLoading) loading.value = true;
+  evaluationError.value = "";
+  try {
+    evaluationResult.value = await evaluateAlgorithm(algorithmId.value, {
+      datasetId: selectedDataset.value,
+      hyperparameters: { ...hyperparameters.value },
+    });
+  } catch (apiError) {
+    evaluationError.value = "真实数据评价暂未加载，请确认后端评价接口可用。";
+    evaluationResult.value = null;
+  } finally {
+    if (manageLoading) loading.value = false;
+  }
 }
 
-function updateFeature(axis, value) {
-  const next = [...featureIndices.value];
-  next[axis] = Number(value);
-  if (next[0] === next[1]) return;
-  featureIndices.value = next;
+async function reloadAll({ resetParameters = false } = {}) {
+  if (resetParameters) hyperparameters.value = defaultHyperparameters(algorithmId.value);
+  loading.value = true;
+  error.value = "";
+  await loadAlgorithmInfo();
+  await Promise.allSettled([
+    loadVisualization({ manageLoading: false }),
+    loadEvaluation({ manageLoading: false }),
+  ]);
+  loading.value = false;
+}
+
+async function recomputeWithCurrentParameters() {
+  loading.value = true;
+  await Promise.allSettled([
+    loadVisualization({ manageLoading: false }),
+    loadEvaluation({ manageLoading: false }),
+  ]);
+  loading.value = false;
 }
 
 onMounted(async () => {
@@ -134,7 +176,7 @@ onMounted(async () => {
   } catch (apiError) {
     datasets.value = fallbackDatasets;
   }
-  await reloadAll({ resetFeatures: true });
+  await reloadAll();
 });
 
 watch(
@@ -146,9 +188,16 @@ watch(
 );
 
 watch(
+  () => selectedPattern.value,
+  async () => {
+    await loadVisualization();
+  },
+);
+
+watch(
   () => selectedDataset.value,
   async () => {
-    await reloadAll({ resetFeatures: true });
+    await loadEvaluation();
   },
 );
 </script>
@@ -157,8 +206,16 @@ watch(
   <section class="algorithm-page">
     <div class="toolbar">
       <div class="dataset-select">
+        <Orbit :size="18" />
+        <select v-model="selectedPattern" aria-label="选择数据模式">
+          <option v-for="item in patterns" :key="item.id" :value="item.id">
+            {{ item.name }}
+          </option>
+        </select>
+      </div>
+      <div class="dataset-select">
         <Database :size="18" />
-        <select v-model="selectedDataset" aria-label="选择数据集">
+        <select v-model="selectedDataset" aria-label="选择评价数据集">
           <option v-for="item in datasets" :key="item.id" :value="item.id">
             {{ item.name }}
           </option>
@@ -166,81 +223,104 @@ watch(
       </div>
       <div class="tab-list" role="tablist">
         <button
-          v-for="tab in tabs"
-          :key="tab.id"
           class="tab-button"
-          :class="{ active: activeTab === tab.id }"
+          :class="{ active: activeTab === 'principle' }"
           type="button"
-          @click="activeTab = tab.id"
+          @click="activeTab = 'principle'"
         >
-          {{ tab.label }}
+          原理讲解
+        </button>
+        <button
+          class="tab-button"
+          :class="{ active: activeTab === 'visualization' }"
+          type="button"
+          @click="activeTab = 'visualization'"
+        >
+          独立可视化运行
+        </button>
+        <button
+          class="tab-button"
+          :class="{ active: activeTab === 'dataset' }"
+          type="button"
+          @click="activeTab = 'dataset'"
+        >
+          数据集
+        </button>
+        <button
+          class="tab-button"
+          :class="{ active: activeTab === 'metrics' }"
+          type="button"
+          @click="activeTab = 'metrics'"
+        >
+          结果评价
+        </button>
+        <button
+          class="tab-button"
+          :class="{ active: activeTab === 'analysis' }"
+          type="button"
+          @click="activeTab = 'analysis'"
+        >
+          结果分析
         </button>
       </div>
     </div>
 
     <div v-if="loading" class="state-panel">
       <RotateCw :size="24" class="spin" />
-      正在由后端生成完整执行过程状态帧
+      正在由后端计算数据
     </div>
     <div v-else-if="error" class="state-panel error">{{ error }}</div>
 
-    <template v-else-if="result">
+    <template v-else>
       <section v-if="activeTab === 'principle'" class="content-panel">
         <div class="section-heading">
           <div>
             <span class="eyebrow">{{ algorithm.category }}</span>
-            <h2>{{ algorithm.name || result.algorithmName }}</h2>
+            <h2>{{ algorithm.name || visualizationResult?.algorithmName }}</h2>
           </div>
           <button class="icon-text-button" type="button" @click="showPrincipleDialog = true">
             <BookOpen :size="18" />
             深入说明
           </button>
         </div>
+        <div v-if="principleError" class="inline-state error">{{ principleError }}</div>
         <div class="principle-grid">
           <article v-for="item in algorithm.principle" :key="item.title" class="principle-card">
             <span>{{ item.title }}</span>
             <p>{{ item.body }}</p>
           </article>
         </div>
+        <div v-if="!principleError && !algorithm.principle.length" class="inline-state">
+          暂无原理内容。
+        </div>
       </section>
 
       <DatasetPanel v-if="activeTab === 'dataset' && dataset" :dataset="dataset" />
+      <section v-else-if="activeTab === 'dataset'" class="content-panel">
+        <div class="inline-state" :class="{ error: evaluationError }">
+          {{ evaluationError || "数据集信息正在等待评价接口返回。" }}
+        </div>
+      </section>
 
-      <section v-if="activeTab === 'visualization'" class="content-panel chart-panel">
+      <section v-if="activeTab === 'visualization' && visualizationResult" class="content-panel chart-panel">
         <div class="section-heading">
           <div>
-            <span class="eyebrow">Process Frame Player</span>
-            <h2>算法执行过程播放器</h2>
+            <span class="eyebrow">Standalone Algorithm Demo</span>
+            <h2>纯净算法过程演示</h2>
           </div>
         </div>
         <div class="inline-controls">
           <div class="inline-controls-head">
             <div>
-              <span>执行过程输入</span>
-              <strong>后端按当前输入重新生成完整状态帧</strong>
+              <span>超参数与模型输入</span>
+              <strong>调整参数观察模型如何在二维平面改变几何边界</strong>
             </div>
-            <button class="primary-action" type="button" :disabled="loading" @click="loadRun">
+            <button class="primary-action" type="button" :disabled="loading" @click="recomputeWithCurrentParameters">
               <SlidersHorizontal :size="17" />
               重新计算
             </button>
           </div>
           <div class="control-grid compact-controls">
-            <label>
-              <span>X 特征</span>
-              <select :value="featureIndices[0]" @change="updateFeature(0, $event.target.value)">
-                <option v-for="(field, index) in featureOptions" :key="field.name" :value="index" :disabled="index === featureIndices[1]">
-                  {{ field.name }}
-                </option>
-              </select>
-            </label>
-            <label>
-              <span>Y 特征</span>
-              <select :value="featureIndices[1]" @change="updateFeature(1, $event.target.value)">
-                <option v-for="(field, index) in featureOptions" :key="field.name" :value="index" :disabled="index === featureIndices[0]">
-                  {{ field.name }}
-                </option>
-              </select>
-            </label>
             <label v-for="control in parameterControls" :key="control.key">
               <span>{{ control.label }}</span>
               <select v-if="control.type === 'select'" v-model="hyperparameters[control.key]">
@@ -258,21 +338,38 @@ watch(
             </label>
           </div>
         </div>
-        <AlgorithmChart :result="result" />
+        <AlgorithmChart :result="visualizationResult" />
+      </section>
+      <section v-else-if="activeTab === 'visualization'" class="content-panel">
+        <div class="inline-state" :class="{ error: visualizationError }">
+          {{ visualizationError || "可视化状态帧正在等待加载。" }}
+        </div>
       </section>
 
-      <section v-if="activeTab === 'analysis'" class="content-panel">
+      <MetricsPanel v-if="activeTab === 'metrics' && evaluationResult" :result="evaluationResult" />
+      <section v-else-if="activeTab === 'metrics'" class="content-panel">
+        <div class="inline-state" :class="{ error: evaluationError }">
+          {{ evaluationError || "真实数据评价正在等待加载。" }}
+        </div>
+      </section>
+
+      <section v-if="activeTab === 'analysis' && evaluationResult" class="content-panel">
         <div class="section-heading">
           <div>
             <span class="eyebrow">Result Analysis</span>
-            <h2>结果分析</h2>
+            <h2>真实数据结果分析</h2>
           </div>
         </div>
         <div class="analysis-grid">
-          <article v-for="section in result.analysis" :key="section.title" class="analysis-card">
+          <article v-for="section in evaluationResult.analysis" :key="section.title" class="analysis-card">
             <h3>{{ section.title }}</h3>
             <p>{{ section.body }}</p>
           </article>
+        </div>
+      </section>
+      <section v-else-if="activeTab === 'analysis'" class="content-panel">
+        <div class="inline-state" :class="{ error: evaluationError }">
+          {{ evaluationError || "结果分析正在等待评价数据。" }}
         </div>
       </section>
     </template>
@@ -283,16 +380,25 @@ watch(
           <X :size="20" />
         </button>
         <span class="eyebrow">Algorithm Principle</span>
-        <h2>{{ algorithm.name || result?.algorithmName }}</h2>
+        <h2>{{ algorithm.name || visualizationResult?.algorithmName }}</h2>
         <div class="principle-grid detailed">
           <article v-for="item in algorithm.principle" :key="item.title" class="principle-card">
             <span>{{ item.title }}</span>
             <p>{{ item.body }}</p>
           </article>
+        </div>
+        <div v-if="algorithm.deepDive?.length" class="dialog-section-title">
+          深入理解
+        </div>
+        <div v-if="algorithm.deepDive?.length" class="principle-grid detailed">
+          <article v-for="item in algorithm.deepDive" :key="item.title" class="principle-card">
+            <span>{{ item.title }}</span>
+            <p>{{ item.body }}</p>
+          </article>
           <article class="principle-card">
-            <span>页面职责</span>
+            <span>模块架构说明</span>
             <p>
-              可视化只负责播放后端返回的算法执行状态帧；距离、投影、边界、切分、权重和网格预测均由后端提前计算。
+              独立可视化模块使用二维合成二分类数据解释算法过程；结果评价模块使用真实数据集和全部特征评估预测表现，两者互不干扰。
             </p>
           </article>
         </div>

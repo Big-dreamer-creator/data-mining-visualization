@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000/api";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8001/api";
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, options);
@@ -24,10 +24,20 @@ export function fetchAlgorithm(id) {
   return request(`/algorithms/${id}`);
 }
 
-export function runAlgorithm(id, payload) {
-  return request(`/algorithms/${id}/run`, {
+export function runVisualization(id, payload) {
+  return request(`/algorithms/${id}/visualization`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 }
+
+export function evaluateAlgorithm(id, payload) {
+  return request(`/algorithms/${id}/evaluate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export const runAlgorithm = runVisualization;

@@ -23,13 +23,13 @@ onMounted(async () => {
       <span class="eyebrow">Vue 3 + FastAPI + ECharts</span>
       <h2>面向教学演示的数据挖掘分类算法可视化系统</h2>
       <p>
-        系统围绕六类经典分类算法组织页面，将算法原理、真实数据集和后端生成的执行过程状态帧整合到同一工作区。
+        系统围绕六类经典分类算法组织页面：独立可视化模块用于演示算法本身的执行过程，真实数据评价模块用于展示预测表现和评价指标。
       </p>
       <div class="workflow">
-        <div><Database :size="20" /> 数据集选择</div>
-        <div><PlayCircle :size="20" /> 模型运行</div>
+        <div><PlayCircle :size="20" /> 独立过程演示</div>
         <div><Activity :size="20" /> 状态帧播放</div>
-        <div><Target :size="20" /> 过程观察</div>
+        <div><Database :size="20" /> 真实数据评测</div>
+        <div><Target :size="20" /> 指标与预测表现</div>
       </div>
     </div>
 

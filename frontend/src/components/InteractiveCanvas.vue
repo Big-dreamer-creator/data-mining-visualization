@@ -19,13 +19,20 @@ const labels = computed(() => props.result.labels || []);
 const bounds = computed(() => props.result.coordinateSystem?.bounds || { xMin: -1, xMax: 1, yMin: -1, yMax: 1 });
 const coordinateSystem = computed(() => props.result.coordinateSystem || {});
 
+// 全局统一缩放比例与偏移量，保证几何等宽等高，不破坏空间距离度量和正交性
+const scale = ref(1);
+const offsetX = ref(0);
+const offsetY = ref(0);
+
 watch(
   () => props.result,
   () => reset(),
   { deep: true },
 );
 
-watch(currentStep, () => nextTick(draw));
+watch(currentStep, () => {
+  requestAnimationFrame(draw); // 使用 RAF 保证滑块拖动或播放时的丝滑渲染
+});
 
 onMounted(() => {
   window.addEventListener("resize", resize);
@@ -52,7 +59,6 @@ function reset() {
   currentStep.value = 0;
   nextTick(() => {
     resize();
-    draw();
   });
 }
 
@@ -63,11 +69,32 @@ function resize() {
   const rect = stage.getBoundingClientRect();
   const ratio = window.devicePixelRatio || 1;
   const height = Math.max(500, Math.min(720, window.innerHeight - 220));
+
   canvas.width = Math.floor(rect.width * ratio);
   canvas.height = Math.floor(height * ratio);
   canvas.style.width = `${rect.width}px`;
   canvas.style.height = `${height}px`;
-  canvas.getContext("2d").setTransform(ratio, 0, 0, ratio, 0, 0);
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+  // 计算等比例坐标系转换参数 (Isotropic Scaling)
+  const paddingX = 48;
+  const top = 62;
+  const bottom = 48;
+  const xSpan = bounds.value.xMax - bounds.value.xMin || 1;
+  const ySpan = bounds.value.yMax - bounds.value.yMin || 1;
+
+  const drawWidth = rect.width - paddingX * 2;
+  const drawHeight = height - top - bottom;
+
+  // 取 X 和 Y 中最小的缩放比，保证数学上的绝对比例正确
+  scale.value = Math.min(drawWidth / xSpan, drawHeight / ySpan);
+
+  // 计算居中偏移量
+  offsetX.value = paddingX + (drawWidth - xSpan * scale.value) / 2;
+  offsetY.value = height - bottom - (drawHeight - ySpan * scale.value) / 2;
+
   draw();
 }
 
@@ -75,8 +102,9 @@ function draw() {
   const canvas = canvasRef.value;
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
+  const width = parseFloat(canvas.style.width);
+  const height = parseFloat(canvas.style.height);
+
   ctx.clearRect(0, 0, width, height);
   paintSurface(ctx, width, height);
   paintGrid(ctx, width, height);
@@ -94,7 +122,7 @@ function paintSurface(ctx, width, height) {
   ctx.fillRect(0, 0, width, 44);
   ctx.fillStyle = "#172033";
   ctx.font = "13px sans-serif";
-  ctx.fillText(`${props.result.algorithmName} · 后端状态帧播放`, 18, 27);
+  ctx.fillText(`${props.result.algorithmName || 'Algorithm'} · 后端状态帧播放`, 18, 27);
 }
 
 function paintGrid(ctx, width, height) {
@@ -108,25 +136,35 @@ function paintGrid(ctx, width, height) {
 
 function paintBackground(ctx, grid) {
   if (!grid?.points?.length) return;
-  const cell = estimateCellSize(grid);
-  grid.points.forEach((point) => {
-    const screen = toScreen(point);
-    ctx.save();
-    ctx.globalAlpha = 0.16;
-    ctx.fillStyle = point.color;
-    ctx.fillRect(screen.x - cell.width / 2, screen.y - cell.height / 2, cell.width + 1, cell.height + 1);
-    ctx.restore();
-  });
-}
+  ctx.save();
 
-function estimateCellSize(grid) {
-  const left = toScreen({ x: bounds.value.xMin, y: bounds.value.yMin });
-  const right = toScreen({ x: bounds.value.xMax, y: bounds.value.yMin });
-  const top = toScreen({ x: bounds.value.xMin, y: bounds.value.yMax });
-  return {
-    width: Math.abs(right.x - left.x) / Math.max(grid.columns - 1, 1),
-    height: Math.abs(top.y - left.y) / Math.max(grid.rows - 1, 1),
-  };
+  const groups = {};
+  grid.points.forEach((point) => {
+    // 映射后端传来的 alpha（置信度），如果未传则默认使用 0.16 的低透明度
+    const alpha = point.alpha !== undefined ? (point.alpha * 0.55).toFixed(2) : 0.16;
+    const key = `${point.color}-${alpha}`;
+    if (!groups[key]) groups[key] = { color: point.color, alpha: alpha, points: [] };
+    groups[key].points.push(point);
+  });
+
+  const cellW = ((bounds.value.xMax - bounds.value.xMin) / Math.max(grid.columns - 1, 1)) * scale.value;
+  const cellH = ((bounds.value.yMax - bounds.value.yMin) / Math.max(grid.rows - 1, 1)) * scale.value;
+  // 增加少许像素重叠（1.5px），消除单元格之间的白边抗锯齿缝隙
+  const renderW = cellW + 1.5;
+  const renderH = cellH + 1.5;
+
+  for (const key in groups) {
+    const group = groups[key];
+    ctx.fillStyle = group.color;
+    ctx.globalAlpha = parseFloat(group.alpha);
+    ctx.beginPath();
+    for (let i = 0; i < group.points.length; i++) {
+      const screen = toScreen(group.points[i]);
+      ctx.rect(screen.x - cellW / 2, screen.y - cellH / 2, renderW, renderH);
+    }
+    ctx.fill(); // 一次性填充同一颜色和透明度的所有网格点，大幅提升渲染性能
+  }
+  ctx.restore();
 }
 
 function paintHelpers(ctx, helpers) {
@@ -135,7 +173,25 @@ function paintHelpers(ctx, helpers) {
     if (helper.type === "point") paintHelperPoint(ctx, helper);
     if (helper.type === "rect") paintRect(ctx, helper);
     if (helper.type === "polyline") paintPolyline(ctx, helper);
+    if (helper.type === "circle") paintCircle(ctx, helper);
   });
+}
+
+function paintCircle(ctx, helper) {
+  const center = toScreen({ x: helper.x, y: helper.y });
+  const radiusPx = helper.r * scale.value; // 将特征空间的距离转换为屏幕像素
+  ctx.save();
+  ctx.strokeStyle = helper.color || "#0f172a";
+  ctx.lineWidth = helper.width || 1.5;
+  if (helper.dash?.length) ctx.setLineDash(helper.dash);
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radiusPx, 0, Math.PI * 2);
+  ctx.stroke();
+  if (helper.fill) {
+    ctx.fillStyle = helper.fill;
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function paintSegment(ctx, helper) {
@@ -144,7 +200,7 @@ function paintSegment(ctx, helper) {
   ctx.save();
   ctx.strokeStyle = helper.color || "#0f172a";
   ctx.lineWidth = helper.width || 1.8;
-  ctx.setLineDash(helper.dash || []);
+  if (helper.dash?.length) ctx.setLineDash(helper.dash);
   line(ctx, start.x, start.y, end.x, end.y);
   ctx.restore();
 }
@@ -179,10 +235,10 @@ function paintPolyline(ctx, helper) {
   ctx.save();
   ctx.strokeStyle = helper.color || "#0f172a";
   ctx.lineWidth = helper.width || 2;
-  ctx.setLineDash(helper.dash || []);
+  if (helper.dash?.length) ctx.setLineDash(helper.dash);
+  ctx.beginPath();
   helper.points.forEach((point, index) => {
     const screen = toScreen(point);
-    if (index === 0) ctx.beginPath();
     if (index === 0) ctx.moveTo(screen.x, screen.y);
     else ctx.lineTo(screen.x, screen.y);
   });
@@ -191,7 +247,13 @@ function paintPolyline(ctx, helper) {
 }
 
 function paintScatter(ctx, points) {
-  points.forEach((point) => {
+  // 核心逻辑修正：小散点和被错分的重点样本画在最上层，防止被 AdaBoost 等大权重点吞没
+  const sortedPoints = [...points].sort((a, b) => {
+    if (a.misclassified !== b.misclassified) return a.misclassified ? 1 : -1;
+    return (b.radius || 6) - (a.radius || 6);
+  });
+
+  sortedPoints.forEach((point) => {
     const screen = toScreen(point);
     ctx.save();
     ctx.globalAlpha = point.labelIndex === -1 ? 1 : 0.9;
@@ -205,7 +267,9 @@ function paintScatter(ctx, points) {
     if (point.labelIndex === -1) {
       ctx.fillStyle = "#ffffff";
       ctx.font = "700 12px sans-serif";
-      ctx.fillText("?", screen.x - 3.5, screen.y + 4);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("?", screen.x, screen.y + 1); // 居中问号
     }
     ctx.restore();
   });
@@ -232,22 +296,16 @@ function paintStepBar(ctx, width, height) {
   ctx.fillStyle = "#dbe5f1";
   ctx.fillRect(x, y, trackWidth, 6);
   ctx.fillStyle = "#2563eb";
-  ctx.fillRect(x, y, trackWidth * ((currentStep.value + 1) / total), 6);
+  const progress = total === 1 ? 1 : (currentStep.value + 1) / total;
+  ctx.fillRect(x, y, trackWidth * progress, 6);
   ctx.restore();
 }
 
+// 基于统一缩放率计算屏幕坐标系
 function toScreen(point) {
-  const canvas = canvasRef.value;
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  const paddingX = 48;
-  const top = 62;
-  const bottom = 36;
-  const xSpan = bounds.value.xMax - bounds.value.xMin || 1;
-  const ySpan = bounds.value.yMax - bounds.value.yMin || 1;
   return {
-    x: paddingX + ((point.x - bounds.value.xMin) / xSpan) * (width - paddingX * 2),
-    y: height - bottom - ((point.y - bounds.value.yMin) / ySpan) * (height - top - bottom),
+    x: offsetX.value + (point.x - bounds.value.xMin) * scale.value,
+    y: offsetY.value - (point.y - bounds.value.yMin) * scale.value,
   };
 }
 

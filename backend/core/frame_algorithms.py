@@ -6,20 +6,14 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import numpy as np
+from sklearn.datasets import make_blobs, make_circles, make_moons
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 
-from core.datasets import get_dataset_summary, load_dataset
-
-
+# 仅保留蓝红二分类经典色板
 PALETTE = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2"]
-DEFAULT_FEATURES = {
-    "iris": [2, 3],
-    "wine": [6, 12],
-}
-
 
 ALGORITHMS = {
     "knn": {
@@ -31,11 +25,45 @@ ALGORITHMS = {
         "principle": [
             {
                 "title": "核心思想",
-                "body": "KNN 不学习参数，而是在预测时计算未知点与所有已知样本的距离，再由最近的 K 个样本投票。",
+                "body": "KNN 是一种基于实例的分类方法。训练阶段几乎不学习显式参数，而是保存训练样本；预测时计算未知点到所有已知点的距离，再从最近的 K 个样本中做多数投票。",
             },
             {
-                "title": "过程观察",
-                "body": "可视化重点是距离连线、最近邻集合和投票结果如何一步步产生，而不是只看最终类别。",
+                "title": "执行过程",
+                "body": "完整过程可以拆成三步：先度量未知点到所有样本的距离，再按距离排序选出 K 个邻居，最后统计邻居类别票数并给出预测类别。",
+            },
+            {
+                "title": "几何含义",
+                "body": "KNN 的边界来自样本点之间的局部竞争。K 较小时边界容易破碎，能贴近局部结构；K 较大时边界更平滑，但可能吞掉少数类的小区域。",
+            },
+            {
+                "title": "关键参数",
+                "body": "K 值决定邻域大小，距离度量决定相似性的定义。由于距离会受量纲影响，真实数据评价前必须标准化，否则数值范围大的特征会支配邻居排序。",
+            },
+            {
+                "title": "观察重点",
+                "body": "重点观察未知点附近是否类别混杂、最近几个邻居距离是否接近、改变 K 值后投票是否翻转。若结果很敏感，通常说明样本位于边界附近或局部样本密度不足。",
+            },
+        ],
+        "deepDive": [
+            {
+                "title": "为什么 KNN 几乎不训练",
+                "body": "KNN 的知识直接存放在样本集合里，所谓训练更多是记忆数据。它把“相似样本有相似标签”作为核心假设，因此预测成本被推迟到了查询时刻。",
+            },
+            {
+                "title": "K 值的偏差与方差",
+                "body": "K 很小时模型方差大，容易被局部噪声影响；K 很大时偏差大，边界会被多数区域拉平。调 K 本质上是在局部敏感和整体稳定之间折中。",
+            },
+            {
+                "title": "距离度量的含义",
+                "body": "欧氏距离强调直线几何距离，曼哈顿距离强调坐标轴方向累计差异。不同距离会改变邻居排序，因此同一个点可能得到不同投票结果。",
+            },
+            {
+                "title": "高维问题",
+                "body": "维度升高后样本之间的距离会变得更接近，最近邻不再那么“近”。这就是 KNN 在高维数据上常遇到的维度灾难。",
+            },
+            {
+                "title": "结果怎么读",
+                "body": "如果混淆集中在某两个类别，通常说明它们在特征空间里互相靠近；如果多数错误来自低置信区域，则说明样本位于边界或局部密度不足。",
             },
         ],
     },
@@ -48,11 +76,45 @@ ALGORITHMS = {
         "principle": [
             {
                 "title": "核心思想",
-                "body": "逻辑回归用线性得分函数表示类别边界，通过最小化交叉熵不断移动和旋转边界。",
+                "body": "逻辑回归用线性函数计算类别得分，再通过 Sigmoid 或 Softmax 转成概率。它名字里有“回归”，但在分类任务中学习的是一条或多条线性决策边界。",
             },
             {
-                "title": "过程观察",
-                "body": "可视化重点是初始随机边界、梯度下降过程中的边界变化，以及样本到边界的误差垂线。",
+                "title": "训练目标",
+                "body": "模型通过最小化交叉熵损失来调整权重。预测错误或置信度不足时损失更大，梯度下降会推动边界向能降低总体损失的方向平移和旋转。",
+            },
+            {
+                "title": "概率解释",
+                "body": "边界两侧不是简单的硬切分，而是概率从一类逐渐过渡到另一类。离边界越远，模型通常越自信；靠近边界的样本更容易成为误判点。",
+            },
+            {
+                "title": "正则化作用",
+                "body": "L2 正则会限制权重过大，使边界更稳定。正则太弱可能过度追逐训练集，正则太强则可能欠拟合，边界会显得过于保守。",
+            },
+            {
+                "title": "观察重点",
+                "body": "重点观察初始随机边界、误差垂线、梯度下降中边界如何移动，以及最终线性区域是否能解释样本分布。如果数据本身呈环形或月牙形，线性边界会天然吃力。",
+            },
+        ],
+        "deepDive": [
+            {
+                "title": "线性得分到概率",
+                "body": "逻辑回归先计算权重与特征的线性组合，再把得分压缩为概率。二分类常用 Sigmoid，多分类常用 Softmax。",
+            },
+            {
+                "title": "交叉熵为什么合适",
+                "body": "交叉熵会惩罚“错得很自信”的预测。模型不只是要预测正确类别，还要让正确类别的概率尽可能高。",
+            },
+            {
+                "title": "边界为什么是直线",
+                "body": "当两个类别概率相等时，线性得分相等。这个等式在二维里对应一条直线，在高维里对应一个超平面。",
+            },
+            {
+                "title": "正则化的直觉",
+                "body": "正则化会惩罚过大的权重，让模型不要为了少数训练样本把边界推得过激。它牺牲一点训练拟合，换取更稳定的泛化。",
+            },
+            {
+                "title": "什么时候不适合",
+                "body": "如果数据呈环形、月牙形或多块区域交错，线性边界无法自然表达结构。此时继续调学习率和迭代次数也只能有限改善。",
             },
         ],
     },
@@ -65,11 +127,45 @@ ALGORITHMS = {
         "principle": [
             {
                 "title": "核心思想",
-                "body": "LDA 通过类别中心和类内散布矩阵求出最优判别方向，让类别投影后尽可能分开。",
+                "body": "LDA 寻找一个判别方向，让同类样本投影后尽量集中，不同类别的投影中心尽量分开。它关心的是分类可分性，而不是单纯保留最大方差。",
             },
             {
-                "title": "过程观察",
-                "body": "可视化重点是类别中心、最优投影轴、正交投影点和轴上阈值如何形成最终线性决策。",
+                "title": "统计假设",
+                "body": "LDA 会估计各类别均值和类内散布，并假设不同类别具有相近的协方差结构。这个假设越接近真实数据，线性判别轴越可靠。",
+            },
+            {
+                "title": "投影公式",
+                "body": "样本到判别轴的垂足由向量点积计算得到：先取样本相对轴上一点的向量，再投到单位方向向量上。这样得到的投影虚线彼此正交且平行。",
+            },
+            {
+                "title": "阈值切分",
+                "body": "投影完成后，模型会在一维轴上寻找能区分类别的阈值。二维空间里的最终决策边界，就是这个阈值在原空间中对应的线性切分。",
+            },
+            {
+                "title": "观察重点",
+                "body": "重点观察类别中心、投影轴方向、样本垂足和阈值位置。若投影后两类仍大量重叠，说明线性投影无法充分揭开类别差异。",
+            },
+        ],
+        "deepDive": [
+            {
+                "title": "LDA 与 PCA 的区别",
+                "body": "PCA 关心保留最大方差，不看标签；LDA 直接利用标签，寻找最有利于分类的方向。一个偏压缩，一个偏判别。",
+            },
+            {
+                "title": "类间与类内散布",
+                "body": "类间散布希望类别中心隔得远，类内散布希望同类点聚得紧。LDA 的目标就是让二者比例尽可能大。",
+            },
+            {
+                "title": "正交投影的意义",
+                "body": "样本被垂直投到判别轴上后，二维问题变成一维排序问题。投影点越分离，阈值越容易切开类别。",
+            },
+            {
+                "title": "共享协方差假设",
+                "body": "LDA 假设不同类别的散布形状相近。如果某类特别扁、某类特别散，线性判别轴可能会偏向错误方向。",
+            },
+            {
+                "title": "结果怎么读",
+                "body": "如果类别中心分开但召回率仍低，可能是类内散布太大；如果中心本身很近，说明当前特征对区分类别帮助有限。",
             },
         ],
     },
@@ -82,11 +178,45 @@ ALGORITHMS = {
         "principle": [
             {
                 "title": "核心思想",
-                "body": "决策树每次选择能让子区域类别更纯的切分规则，递归形成一组轴向矩形区域。",
+                "body": "决策树把分类问题拆成一串 if-then 判断。每个节点选择一个特征和阈值，把样本切成更纯的两个子区域，直到满足停止条件或叶子足够纯。",
             },
             {
-                "title": "过程观察",
-                "body": "可视化重点是每一刀切在哪里、属于哪个矩形区域，以及最终边界为何呈俄罗斯方块状。",
+                "title": "切分准则",
+                "body": "Gini、Entropy 和 Log Loss 都在衡量切分后的混杂程度。好的切分会让子节点里某一类占比更高，因此信息不确定性下降。",
+            },
+            {
+                "title": "几何形态",
+                "body": "普通决策树每次只看一个特征，所以二维空间里只能画水平线或垂直线。多层递归后，最终边界会形成一块块正交矩形区域。",
+            },
+            {
+                "title": "复杂度控制",
+                "body": "最大深度、叶子最小样本数会直接限制树的细碎程度。树越深越容易贴合训练集噪声，树太浅又可能无法表达真实结构。",
+            },
+            {
+                "title": "观察重点",
+                "body": "重点观察第一刀切在哪里、后续切线是否只在局部矩形内生效，以及最终边界是否过度碎片化。训练准确率高但测试表现差时，常见原因就是树太复杂。",
+            },
+        ],
+        "deepDive": [
+            {
+                "title": "信息增益直觉",
+                "body": "一次好的切分会让左右子节点更纯。纯度提升越明显，说明这个规则越能减少分类不确定性。",
+            },
+            {
+                "title": "为什么边界是阶梯状",
+                "body": "决策树每次只判断一个特征是否超过阈值，所以在二维空间里只能横切或竖切。多次局部切分叠起来就是阶梯状边界。",
+            },
+            {
+                "title": "可解释性从哪里来",
+                "body": "从根节点走到叶节点就是一条完整规则，例如“特征 A 小于某值，并且特征 B 大于某值，则预测为某类”。",
+            },
+            {
+                "title": "过拟合风险",
+                "body": "树越深，越容易为少数样本单独切出小区域。训练集表现可能很好，但测试集会因为规则过细而掉分。",
+            },
+            {
+                "title": "结果怎么读",
+                "body": "若训练准确率明显高于测试准确率，先看最大深度和叶子样本数；若两者都低，说明树太浅或特征本身区分度不足。",
             },
         ],
     },
@@ -99,11 +229,45 @@ ALGORITHMS = {
         "principle": [
             {
                 "title": "核心思想",
-                "body": "AdaBoost 会提高上一轮错分样本的权重，使后续弱分类器更关注困难样本。",
+                "body": "AdaBoost 串行训练多个弱分类器。每一轮都会提高上一轮错分样本的权重，让后续分类器更关注困难样本，最后通过加权投票组成强分类器。",
             },
             {
-                "title": "过程观察",
-                "body": "可视化重点是弱分类器切线、错分点变大和多条切线组合成强分类器边界的过程。",
+                "title": "样本权重",
+                "body": "样本权重表示当前模型的注意力。被错分的样本会在下一轮变大，说明它们正在影响下一条弱分类器切线的位置。",
+            },
+            {
+                "title": "弱分类器权重",
+                "body": "每个弱分类器自身也有权重。错误率低的弱分类器在最终投票中声音更大，错误率接近随机猜测的分类器贡献会变小。",
+            },
+            {
+                "title": "边界组合",
+                "body": "单个弱分类器通常只是简单横线或竖线，但多个弱分类器叠加后可以形成锯齿状组合边界，逐步修补上一轮留下的错误区域。",
+            },
+            {
+                "title": "观察重点",
+                "body": "重点观察错分样本何时变大、弱分类器是否围绕困难点调整，以及权重是否过度集中在少数异常点。噪声较多时，AdaBoost 可能被异常点牵着走。",
+            },
+        ],
+        "deepDive": [
+            {
+                "title": "Boosting 的核心",
+                "body": "Boosting 不是并行训练很多模型，而是一个接一个修正前面的错误。每一轮都带着上一轮的遗憾继续学习。",
+            },
+            {
+                "title": "样本权重为何会变",
+                "body": "错分样本权重变大，是为了让下一轮弱分类器更难忽略它们。权重变化就是模型注意力的迁移轨迹。",
+            },
+            {
+                "title": "弱分类器也有权重",
+                "body": "表现好的弱分类器在最终投票中权重大，表现差的权重小。强分类器不是简单平均，而是可信度加权组合。",
+            },
+            {
+                "title": "对噪声敏感",
+                "body": "如果某些样本本身标注错误或是异常点，AdaBoost 会反复关注它们，导致后续模型把精力浪费在噪声上。",
+            },
+            {
+                "title": "结果怎么读",
+                "body": "如果增加弱分类器后测试指标不再提升，说明模型已经进入收益平台期；若泛化差距扩大，就要降低学习率或减少轮数。",
             },
         ],
     },
@@ -116,11 +280,45 @@ ALGORITHMS = {
         "principle": [
             {
                 "title": "核心思想",
-                "body": "MLP 通过隐藏层和非线性激活函数学习弯曲的分类边界，并用反向传播逐步更新权重。",
+                "body": "MLP 由输入层、隐藏层和输出层组成。每层先做加权求和，再通过非线性激活函数变换，从而逐层构造更复杂的特征表达。",
             },
             {
-                "title": "过程观察",
-                "body": "可视化重点是不同 epoch 的边界快照，观察空间如何从僵硬分割逐渐变得平滑非线性。",
+                "title": "训练过程",
+                "body": "模型先前向传播得到预测结果，再通过反向传播计算误差对每个权重的影响，最后由优化器更新参数。Epoch 快照展示的就是这个迭代过程。",
+            },
+            {
+                "title": "非线性能力",
+                "body": "隐藏层和激活函数让 MLP 不必局限于直线边界。它可以学习弯曲、包裹、分段平滑的决策区域，适合演示空间被逐步扭曲的过程。",
+            },
+            {
+                "title": "超参数影响",
+                "body": "隐藏层规模、激活函数、学习率、正则项和训练轮数都会影响边界形态。学习率过高可能震荡，训练过久且正则不足可能过拟合。",
+            },
+            {
+                "title": "观察重点",
+                "body": "重点观察早期边界是否接近线性、中期是否开始弯曲、最终是否平滑包裹异类样本。若边界出现很多无意义波纹，通常说明模型复杂度偏高。",
+            },
+        ],
+        "deepDive": [
+            {
+                "title": "隐藏层在做什么",
+                "body": "隐藏层可以看作把原始空间重新编码。经过多层非线性变换后，原本难以线性分开的样本可能在新表示中变得可分。",
+            },
+            {
+                "title": "反向传播直觉",
+                "body": "反向传播会计算每个权重对最终误差的责任大小。责任越大，更新越明显，模型就沿着降低损失的方向调整。",
+            },
+            {
+                "title": "激活函数的作用",
+                "body": "如果没有非线性激活，多层线性变换仍然等价于一层线性模型。激活函数是 MLP 能学习弯曲边界的关键。",
+            },
+            {
+                "title": "训练不稳定的来源",
+                "body": "学习率太大可能震荡，太小收敛慢；隐藏层过大可能过拟合，过小可能欠拟合。MLP 的表现高度依赖这些超参数。",
+            },
+            {
+                "title": "结果怎么读",
+                "body": "不要只看训练准确率。若训练集很高但测试集下降，说明边界可能出现无意义波纹；若两者都低，模型容量或训练轮数可能不足。",
             },
         ],
     },
@@ -140,13 +338,12 @@ class PreparedRun:
 
 
 def run_algorithm(
-    algorithm_id: str,
-    dataset_id: str,
-    feature_indices: list[int] | None = None,
-    hyperparameters: dict[str, Any] | None = None,
+        algorithm_id: str,
+        pattern: str = "blobs",
+        hyperparameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     hyperparameters = hyperparameters or {}
-    data = _prepare_data(dataset_id, feature_indices)
+    data = _prepare_data(pattern)
     runners: dict[str, Callable[[PreparedRun, dict[str, Any]], list[dict[str, Any]]]] = {
         "knn": _run_knn,
         "logistic-regression": _run_logistic_regression,
@@ -179,29 +376,31 @@ def run_algorithm(
     }
 
 
-def _prepare_data(dataset_id: str, feature_indices: list[int] | None) -> PreparedRun:
-    loaded = load_dataset(dataset_id)
-    feature_names = loaded["featureNames"]
-    indices = feature_indices or DEFAULT_FEATURES.get(dataset_id, [0, 1])
-    if len(indices) != 2:
-        raise ValueError("featureIndices must contain exactly two feature indexes")
-    if indices[0] == indices[1]:
-        raise ValueError("featureIndices must reference two different features")
-    if min(indices) < 0 or max(indices) >= len(feature_names):
-        raise ValueError("featureIndices contains an out-of-range feature index")
+def _prepare_data(pattern: str) -> PreparedRun:
+    """生成用于纯算法演示的 2D 合成二分类数据集"""
+    n_samples = 150
+    if pattern == "moons":
+        x_raw, y = make_moons(n_samples=n_samples, noise=0.18, random_state=42)
+        desc = "半月形非线性分布：专门测试算法是否具备解决非线性问题的能力（如 MLP、核技巧）。"
+    elif pattern == "circles":
+        x_raw, y = make_circles(n_samples=n_samples, noise=0.12, factor=0.4, random_state=42)
+        desc = "环形包裹分布：中心被外环包裹，线性分类器在此分布下将完全失效。"
+    else:
+        # blobs (线性可分，增加少许重叠增加真实感)
+        x_raw, y = make_blobs(n_samples=n_samples, centers=[[-2, -2], [2, 2]], cluster_std=1.5, random_state=42)
+        desc = "高斯团簇分布：经典的近似线性可分场景，适合观察逻辑回归、LDA 等基础模型。"
 
-    x_raw = loaded["data"][:, indices]
     x = StandardScaler().fit_transform(x_raw)
-    y = np.asarray(loaded["target"], dtype=int)
     bounds = _bounds_for(x)
+
     return PreparedRun(
-        dataset_id=dataset_id,
-        dataset=get_dataset_summary(dataset_id, include_preview=True),
+        dataset_id=pattern,
+        dataset={"name": f"Synthetic 2D - {pattern.capitalize()}", "description": desc},
         x=x,
         y=y,
-        labels=loaded["targetNames"],
-        feature_names=feature_names,
-        feature_indices=indices,
+        labels=["类别 0 (Blue)", "类别 1 (Red)"],
+        feature_names=["特征维度 X1", "特征维度 X2"],
+        feature_indices=[0, 1],
         bounds=bounds,
     )
 
@@ -237,20 +436,16 @@ def _run_logistic_regression(data: PreparedRun, params: dict[str, Any]) -> list[
             helpers.extend(_logistic_error_segments(data.x, data.y, current, data.labels, limit=70))
             description = "初始随机边界：后端随机生成 Softmax 权重，显示多分类线性边界和样本到相关边界的误差垂线。"
         elif iteration == iterations:
-            description = "最终状态：梯度下降完成，后端用最终权重计算密集网格，形成线性多边形决策区域。"
+            description = "最终状态：梯度下降完成，后端用最终权重计算密集网格，形成概率热力图。"
         else:
             description = f"梯度下降第 {iteration} 次迭代：边界根据交叉熵梯度发生平移和旋转，继续寻找更低损失。"
         background = None
         if iteration == iterations:
-            background = _grid(
-                data.bounds,
-                lambda points, model=current: np.argmax(
-                    np.column_stack([points, np.ones(len(points))]) @ model,
-                    axis=1,
-                ),
-                data.labels,
-                resolution=68,
-            )
+            def proba_predictor(points, model=current):
+                return _softmax(np.column_stack([points, np.ones(len(points))]) @ model)
+
+            background = _grid(data.bounds, proba_predictor, data.labels, resolution=90, use_proba=True)
+
         steps.append(
             _step(
                 description,
@@ -314,33 +509,16 @@ def _run_lda(data: PreparedRun, params: dict[str, Any]) -> list[dict[str, Any]]:
     threshold_helpers = _lda_threshold_helpers(overall_mean, axis, thresholds, data.bounds)
 
     return [
+        _step("计算类别中心点：计算二分类的各自几何中心坐标。", _scatter(data), None, center_helpers),
+        _step("最优投影轴：寻找让类间距离最大、类内方差最小的一维判别轴。", _scatter(data), None,
+              center_helpers + [axis_line]),
+        _step("正交投影：计算每个样本到判别轴的垂足。", _scatter(data), None,
+              center_helpers + [axis_line] + projection_helpers),
         _step(
-            "计算类别中心点：后端在二维标准化特征空间中求出每个类别的真实中心坐标。",
-            _scatter(data),
-            None,
-            center_helpers,
-        ),
-        _step(
-            "计算一维最优投影轴：后端求解类间散布与类内散布的广义方向，输出判别轴绝对坐标。",
-            _scatter(data),
-            None,
-            center_helpers + [axis_line],
-        ),
-        _step(
-            "正交投影：后端使用向量点积公式计算每个样本到判别轴的真实垂足坐标，虚线因此完全平行。",
-            _scatter(data),
-            None,
-            center_helpers + [axis_line] + projection_helpers,
-        ),
-        _step(
-            "轴上阈值切分：后端在投影轴上按类别中心顺序取阈值，并生成最终线性决策背景网格。",
+            "轴上阈值切分：在投影轴上取阈值形成线性分类面。",
             _scatter(data, predictions=predict(data.x)),
-            _grid(data.bounds, predict, data.labels, resolution=68),
+            _grid(data.bounds, predict, data.labels, resolution=90),
             center_helpers + [axis_line] + threshold_helpers,
-            annotations=[
-                {"text": f"阈值数量：{len(thresholds)}", "tone": "neutral"},
-                {"text": "预测规则：样本投影后归入最近的类别中心区间。", "tone": "neutral"},
-            ],
         ),
     ]
 
@@ -351,57 +529,35 @@ def _run_decision_tree(data: PreparedRun, params: dict[str, Any]) -> list[dict[s
         criterion = "gini"
     max_depth = _int_param(params, "maxDepth", 4, 1, 8)
     min_samples_leaf = _int_param(params, "minSamplesLeaf", 3, 1, 30)
-    model = DecisionTreeClassifier(
-        criterion=criterion,
-        max_depth=max_depth,
-        min_samples_leaf=min_samples_leaf,
-        random_state=42,
-    )
+    model = DecisionTreeClassifier(criterion=criterion, max_depth=max_depth, min_samples_leaf=min_samples_leaf,
+                                   random_state=42)
     model.fit(data.x, data.y)
     splits = []
     _collect_tree_splits(model, 0, data.bounds.copy(), splits, data.labels)
     if not splits:
-        predictions = model.predict(data.x)
-        return [
-            _step(
-                "决策树没有找到有效切分：当前特征组合下根节点已经形成叶节点。",
-                _scatter(data, predictions=predictions),
-                _grid(data.bounds, model.predict, data.labels, resolution=68),
-                [],
-            )
-        ]
+        return [_step("当前限制下未能形成切分。", _scatter(data, predictions=model.predict(data.x)),
+                      _grid(data.bounds, model.predict, data.labels, resolution=90), [])]
 
     steps = []
     visible_splits = splits[: min(10, len(splits))]
     for index, split in enumerate(visible_splits):
         helpers = [_tree_split_helper(item, data.bounds) for item in visible_splits[: index + 1]]
-        prefix = "第一刀" if index == 0 else f"第 {index + 1} 次递归切分"
-        axis_name = "垂直" if split["feature"] == 0 else "水平"
         steps.append(
             _step(
-                f"{prefix}：后端选择当前节点信息增益最大的特征阈值，在已有矩形区域内加入一条{axis_name}切线。",
+                f"第 {index + 1} 次递归切分：寻找信息增益最大的阈值加入一条正交切线。",
                 _scatter(data),
                 None,
                 helpers,
-                annotations=[
-                    {
-                        "text": f"{split['featureName']} <= {_num(split['threshold'])}",
-                        "tone": "neutral",
-                    }
-                ],
+                annotations=[{"text": f"{split['featureName']} <= {_num(split['threshold'])}", "tone": "neutral"}],
             )
         )
 
-    predictions = model.predict(data.x)
     steps.append(
         _step(
-            "最终决策树空间：所有递归切分完成，后端网格预测呈现典型的正交矩形决策边界。",
-            _scatter(data, predictions=predictions),
-            _grid(data.bounds, model.predict, data.labels, resolution=74),
+            "决策树空间：形成典型的正交矩形决策边界。",
+            _scatter(data, predictions=model.predict(data.x)),
+            _grid(data.bounds, model.predict, data.labels, resolution=90),
             [_tree_split_helper(item, data.bounds) for item in splits],
-            annotations=[
-                {"text": f"树深度：{model.get_depth()}，叶节点：{model.get_n_leaves()}", "tone": "neutral"}
-            ],
         )
     )
     return steps
@@ -426,7 +582,8 @@ def _run_knn(data: PreparedRun, params: dict[str, Any]) -> list[dict[str, Any]]:
     selected = order[:k]
     votes = []
     for label in range(len(data.labels)):
-        votes.append({"labelIndex": label, "labelName": data.labels[label], "votes": int(np.sum(train_y[selected] == label))})
+        votes.append(
+            {"labelIndex": label, "labelName": data.labels[label], "votes": int(np.sum(train_y[selected] == label))})
     votes = sorted(votes, key=lambda item: (-item["votes"], item["labelIndex"]))
     winner = votes[0]
     model = KNeighborsClassifier(n_neighbors=k, metric=metric)
@@ -436,66 +593,41 @@ def _run_knn(data: PreparedRun, params: dict[str, Any]) -> list[dict[str, Any]]:
     unknown_point = _unknown_point(unknown, "unknown-0")
     all_lines = [
         {
-            "type": "segment",
-            "x1": _num(unknown[0]),
-            "y1": _num(unknown[1]),
-            "x2": _num(train_x[index][0]),
-            "y2": _num(train_x[index][1]),
-            "color": "rgba(100,116,139,0.28)",
-            "width": 1,
-            "dash": [5, 7],
-            "label": f"distance={_num(distances[index])}",
-            "distance": _num(distances[index]),
-        }
-        for index in order
+            "type": "segment", "x1": _num(unknown[0]), "y1": _num(unknown[1]),
+            "x2": _num(train_x[index][0]), "y2": _num(train_x[index][1]),
+            "color": "rgba(100,116,139,0.28)", "width": 1, "dash": [5, 7]
+        } for index in order
     ]
-    selected_lines = []
-    for rank, index in enumerate(selected):
-        selected_lines.append(
-            {
-                "type": "segment",
-                "x1": _num(unknown[0]),
-                "y1": _num(unknown[1]),
-                "x2": _num(train_x[index][0]),
-                "y2": _num(train_x[index][1]),
-                "color": PALETTE[int(train_y[index]) % len(PALETTE)],
-                "width": 2.6,
-                "rank": rank + 1,
-                "distance": _num(distances[index]),
-                "label": f"#{rank + 1} {data.labels[int(train_y[index])]}",
-            }
-        )
+    selected_lines = [
+        {
+            "type": "segment", "x1": _num(unknown[0]), "y1": _num(unknown[1]),
+            "x2": _num(train_x[index][0]), "y2": _num(train_x[index][1]),
+            "color": PALETTE[int(train_y[index]) % len(PALETTE)], "width": 2.6
+        } for index in selected
+    ]
     selected_ids = {f"sample-{int(index)}" for index in selected}
-    selected_scatter = []
-    for point_index, point in enumerate(known_points):
-        if point["id"] in selected_ids:
-            point = {**point, "selected": True, "radius": 10}
-        selected_scatter.append(point)
+    selected_scatter = [{**pt, "selected": True, "radius": 10} if pt["id"] in selected_ids else pt for pt in
+                        known_points]
+
+    kth_distance = float(distances[order[k - 1]])
+    circle_helper = {
+        "type": "circle", "x": _num(unknown[0]), "y": _num(unknown[1]),
+        "r": _num(kth_distance), "color": "#94a3b8", "dash": [4, 4], "fill": "rgba(148, 163, 184, 0.15)"
+    }
 
     return [
+        _step("距离度量：计算未知点到所有已知样本的距离。", known_points + [unknown_point], None, all_lines),
         _step(
-            "距离度量：后端预设一个未知样本点，并计算它到所有已知训练样本的真实距离连线。",
-            known_points + [unknown_point],
-            None,
-            all_lines,
-            annotations=[{"text": f"未知样本真实类别在预测前隐藏：{data.labels[int(data.y[unknown_index])]}", "tone": "muted"}],
+            f"选择最近的 K={k} 个邻居：以第 K 个样本距离为半径画圆并投票。",
+            selected_scatter + [{**unknown_point, "predictedLabelIndex": winner["labelIndex"],
+                                 "predictedLabelName": winner["labelName"]}],
+            None, selected_lines + [circle_helper]
         ),
         _step(
-            f"选择最近的 K={k} 个邻居：后端按距离排序并返回最近邻集合，同时完成类别投票统计。",
-            selected_scatter + [{**unknown_point, "predictedLabelIndex": winner["labelIndex"], "predictedLabelName": winner["labelName"]}],
-            None,
-            selected_lines,
-            annotations=[
-                {"text": "投票结果：" + " / ".join(f"{item['labelName']} {item['votes']}票" for item in votes), "tone": "neutral"},
-                {"text": f"预测类别：{winner['labelName']}", "tone": "success"},
-            ],
-        ),
-        _step(
-            "KNN 决策背景：后端对密集网格逐点计算最近邻投票，展示 K 值带来的破碎或平滑边界。",
-            selected_scatter + [{**unknown_point, "predictedLabelIndex": winner["labelIndex"], "predictedLabelName": winner["labelName"]}],
-            _grid(data.bounds, model.predict, data.labels, resolution=72),
-            selected_lines,
-            annotations=[{"text": f"距离度量：{metric}", "tone": "neutral"}],
+            "KNN 决策背景：逐点计算最近邻展示几何边界形态。",
+            selected_scatter + [{**unknown_point, "predictedLabelIndex": winner["labelIndex"]}],
+            _grid(data.bounds, model.predict, data.labels, resolution=90),
+            selected_lines + [circle_helper]
         ),
     ]
 
@@ -505,69 +637,42 @@ def _run_adaboost(data: PreparedRun, params: dict[str, Any]) -> list[dict[str, A
     learning_rate = _float_param(params, "learningRate", 0.8, 0.05, 3.0)
     classes = len(data.labels)
     weights = np.ones(len(data.x)) / len(data.x)
-    estimators = []
-    alphas = []
-    steps = [
-        _step(
-            "初始权重：每个样本权重完全一致，散点半径相同，第一轮弱分类器尚未开始关注困难样本。",
-            _scatter(data, weights=weights),
-            None,
-            [],
-            annotations=[{"text": "所有样本权重 = 1 / 样本数", "tone": "neutral"}],
-        )
-    ]
+    estimators, alphas, steps = [], [], []
+    steps.append(_step("初始权重：所有样本权重一致。", _scatter(data, weights=weights), None, []))
 
     for round_index in range(rounds):
         stump = DecisionTreeClassifier(max_depth=1, random_state=100 + round_index)
         stump.fit(data.x, data.y, sample_weight=weights)
         predictions = stump.predict(data.x)
         incorrect = predictions != data.y
-        error = float(np.sum(weights[incorrect]))
-        error = min(max(error, 1e-9), 1 - 1e-9)
-        raw_alpha = math.log((1 - error) / error) + math.log(max(classes - 1, 1))
-        alpha = learning_rate * max(0.35, raw_alpha)
+        error = max(min(float(np.sum(weights[incorrect])), 1 - 1e-9), 1e-9)
+        alpha = learning_rate * max(0.35, math.log((1 - error) / error) + math.log(max(classes - 1, 1)))
+
         helper = _stump_helper(stump, data.bounds)
-        steps.append(
-            _step(
-                f"第 {round_index + 1} 个弱分类器：后端训练一条简单水平或垂直切线，并标出本轮错分样本。",
-                _scatter(data, weights=weights, predictions=predictions, misclassified=incorrect),
-                None,
-                [helper],
-                annotations=[
-                    {"text": f"加权错误率={_num(error)}，分类器权重 alpha={_num(alpha)}", "tone": "neutral"}
-                ],
-            )
-        )
+        steps.append(_step(f"第 {round_index + 1} 个弱分类器切分",
+                           _scatter(data, weights=weights, predictions=predictions, misclassified=incorrect), None,
+                           [helper]))
+
         weights = weights * np.exp(alpha * incorrect)
-        weights = weights / np.sum(weights)
+        weights /= np.sum(weights)
         estimators.append(stump)
         alphas.append(alpha)
-        steps.append(
-            _step(
-                f"第 {round_index + 1} 轮权重更新：上一帧被错分的样本权重显著变大，下一轮会优先关注这些点。",
-                _scatter(data, weights=weights, predictions=predictions, misclassified=incorrect),
-                None,
-                [helper],
-                annotations=[
-                    {"text": f"最大权重 / 平均权重 = {_num(np.max(weights) / np.mean(weights))}", "tone": "warning"}
-                ],
-            )
-        )
+        steps.append(_step(f"第 {round_index + 1} 轮权重放大：错分样本散点变大，下一轮优先关注。",
+                           _scatter(data, weights=weights, predictions=predictions, misclassified=incorrect), None,
+                           [helper]))
 
     def strong_predict(points: np.ndarray) -> np.ndarray:
         scores = np.zeros((len(points), classes))
         for stump, alpha in zip(estimators, alphas):
-            pred = stump.predict(points)
-            scores[np.arange(len(points)), pred] += alpha
+            scores[np.arange(len(points)), stump.predict(points)] += alpha
         return np.argmax(scores, axis=1)
 
     steps.append(
         _step(
-            "强分类器组合边界：后端将所有弱分类器加权投票，对网格逐点预测后形成锯齿状组合边界。",
+            "强分类器组合：弱分类器加权投票形成锯齿状最终边界。",
             _scatter(data, weights=weights, predictions=strong_predict(data.x)),
-            _grid(data.bounds, strong_predict, data.labels, resolution=74),
+            _grid(data.bounds, strong_predict, data.labels, resolution=90),
             [_stump_helper(stump, data.bounds, color="#0f172a", width=1.6) for stump in estimators],
-            annotations=[{"text": f"弱分类器数量：{len(estimators)}", "tone": "neutral"}],
         )
     )
     return steps
@@ -576,47 +681,30 @@ def _run_adaboost(data: PreparedRun, params: dict[str, Any]) -> list[dict[str, A
 def _run_mlp(data: PreparedRun, params: dict[str, Any]) -> list[dict[str, Any]]:
     epochs = _int_param(params, "epochs", 140, 10, 400)
     hidden_layers = _hidden_layers(params.get("hiddenLayers", "32,16"))
-    activation = str(params.get("activation", "tanh"))
-    if activation not in {"identity", "logistic", "tanh", "relu"}:
-        activation = "tanh"
-    learning_rate = _float_param(params, "learningRate", 0.025, 0.0001, 1.0)
-    alpha = _float_param(params, "alpha", 0.0003, 0.0, 1.0)
-    seed = _int_param(params, "randomSeed", 42, 0, 100000)
-
     model = MLPClassifier(
-        hidden_layer_sizes=hidden_layers,
-        activation=activation,
-        solver="adam",
-        alpha=alpha,
-        learning_rate_init=learning_rate,
-        max_iter=1,
-        random_state=seed,
+        hidden_layer_sizes=hidden_layers, activation=params.get("activation", "tanh"),
+        solver="adam", alpha=_float_param(params, "alpha", 0.0003, 0.0, 1.0),
+        learning_rate_init=_float_param(params, "learningRate", 0.025, 0.0001, 1.0),
+        max_iter=1, random_state=_int_param(params, "randomSeed", 42, 0, 100000),
     )
     snapshot_epochs = sorted(set([1, 3, 8, 20, 45, 90, epochs]))
     steps = []
     classes = np.arange(len(data.labels))
     for epoch in range(1, epochs + 1):
-        if epoch == 1:
-            model.partial_fit(data.x, data.y, classes=classes)
-        else:
-            model.partial_fit(data.x, data.y)
+        model.partial_fit(data.x, data.y, classes=classes) if epoch == 1 else model.partial_fit(data.x, data.y)
         if epoch in snapshot_epochs:
-            predictions = model.predict(data.x)
-            boundary_note = "早期边界仍较僵硬，通常接近线性或大块区域。" if epoch <= 8 else "边界开始被隐藏层逐步扭曲。" if epoch < epochs else "最终快照呈现平滑非线性决策区域。"
             steps.append(
                 _step(
-                    f"Epoch {epoch} 快照：后端保存当前神经网络参数，并对密集网格执行预测。{boundary_note}",
-                    _scatter(data, predictions=predictions),
-                    _grid(data.bounds, model.predict, data.labels, resolution=70),
+                    f"Epoch {epoch} 快照：显示网络逐渐扭曲空间形成的非线性概率热力图。",
+                    _scatter(data, predictions=model.predict(data.x)),
+                    _grid(data.bounds, model.predict_proba, data.labels, resolution=90, use_proba=True),
                     [],
-                    annotations=[
-                        {"text": f"loss={_num(float(model.loss_))}", "tone": "neutral"},
-                        {"text": f"隐藏层={hidden_layers}", "tone": "neutral"},
-                    ],
                 )
             )
     return steps
 
+
+# ---------------- 辅助方法与底层计算 ----------------
 
 def _public_parameters(algorithm_id: str, params: dict[str, Any]) -> dict[str, Any]:
     defaults = {
@@ -625,530 +713,194 @@ def _public_parameters(algorithm_id: str, params: dict[str, Any]) -> dict[str, A
         "lda": {"regularization": 0.001, "thresholdMode": "nearest-center"},
         "decision-tree": {"criterion": "gini", "maxDepth": 4, "minSamplesLeaf": 3},
         "adaboost": {"nEstimators": 5, "learningRate": 0.8},
-        "mlp": {"hiddenLayers": "32,16", "activation": "tanh", "learningRate": 0.025, "alpha": 0.0003, "epochs": 140, "randomSeed": 42},
+        "mlp": {"hiddenLayers": "32,16", "activation": "tanh", "learningRate": 0.025, "alpha": 0.0003, "epochs": 140,
+                "randomSeed": 42},
     }
     merged = defaults[algorithm_id].copy()
     merged.update(params)
     return merged
 
 
-def _build_result_analysis(
-    algorithm_id: str,
-    data: PreparedRun,
-    steps: list[dict[str, Any]],
-) -> list[dict[str, str]]:
-    final_step = steps[-1] if steps else _step("", [], None, [])
-    predicted_points = [
-        point
-        for point in final_step.get("scatter", [])
-        if point.get("labelIndex", -1) >= 0 and "predictedLabelIndex" in point
-    ]
-    if predicted_points:
-        correct = sum(
-            1 for point in predicted_points
-            if int(point["labelIndex"]) == int(point["predictedLabelIndex"])
-        )
-        accuracy = correct / max(len(predicted_points), 1)
-        result_body = (
-            f"最终帧在当前二维特征空间内对 {len(predicted_points)} 个样本给出预测，"
-            f"其中 {correct} 个与真实类别一致，帧内准确率为 {accuracy:.2%}。"
-        )
-    else:
-        result_body = (
-            "最终帧重点展示单个未知样本的预测过程。该算法页面的结果解读应结合最近邻投票、"
-            "邻居类别分布和网格背景，而不是只看一个测试点是否分类正确。"
-        )
-
-    grid_points = final_step.get("backgroundGrid", {}).get("points", []) if final_step.get("backgroundGrid") else []
-    if grid_points:
-        counts = Counter(point["labelName"] for point in grid_points)
-        total = sum(counts.values())
-        dominant = counts.most_common(1)[0]
-        boundary_body = (
-            f"最终决策背景由后端逐点预测生成，共覆盖 {total} 个网格点。"
-            f"面积占比最高的类别是 {dominant[0]}，约占 {dominant[1] / max(total, 1):.1%}。"
-            f"{_boundary_comment(algorithm_id)}"
-        )
-    else:
-        boundary_body = "当前最终帧没有背景网格，结果主要通过样本点和辅助几何对象解释。"
-
-    x_name = data.feature_names[data.feature_indices[0]]
-    y_name = data.feature_names[data.feature_indices[1]]
+def _build_result_analysis(algorithm_id: str, data: PreparedRun, steps: list[dict[str, Any]]) -> list[dict[str, str]]:
     return [
-        {"title": "最终结果", "body": result_body},
-        {"title": "边界形态", "body": boundary_body},
-        {
-            "title": "过程回顾",
-            "body": (
-                f"本次后端共生成 {len(steps)} 个状态帧，覆盖从初始状态、中间执行到最终决策的完整过程。"
-                f"所有距离、投影、切线、权重、背景网格都在后端基于同一二维空间计算完成。"
-            ),
-        },
-        {
-            "title": "结果限定",
-            "body": (
-                f"当前分析只针对所选二维特征 {x_name} 与 {y_name}。"
-                "如果切换特征或超参数，执行过程和最终边界都会重新计算，结果解释也会随之变化。"
-            ),
-        },
+        {"title": "独立演示模块声明",
+         "body": "当前展示已脱离真实业务数据，纯粹使用 Scikit-learn 的二维二分类合成数据，专门用于暴露算法的几何几何切分本质。"},
+        {"title": "结果限定",
+         "body": "由于降维过程在实际中会导致巨大信息丢失，因此本页面使用合成的 2D 坐标（特征 X1 与 X2）来确保绘图能完美呈现出纯正的数学决策边界形态。"},
     ]
 
 
-def _boundary_comment(algorithm_id: str) -> str:
-    comments = {
-        "knn": " KNN 的区域形态由局部邻居投票决定，K 越小越容易出现破碎边界。",
-        "logistic-regression": " 逻辑回归边界保持线性，多分类时由多条两两等分线围成多边形区域。",
-        "lda": " LDA 的最终背景来自一维投影轴上的阈值切分，因此边界仍然是线性的。",
-        "decision-tree": " 决策树只做水平或垂直切分，因此最终区域呈正交矩形块状。",
-        "adaboost": " AdaBoost 由多个树桩叠加投票，边界会呈现由横竖切线组合出的锯齿感。",
-        "mlp": " MLP 通过隐藏层非线性变换形成平滑弯曲的决策区域。",
-    }
-    return comments.get(algorithm_id, "")
+def _step(desc: str, scatter: list, bg: dict | None, helpers: list, annotations: list = None) -> dict:
+    return {"index": 0, "description": desc, "scatter": scatter, "backgroundGrid": bg, "helpers": helpers,
+            "annotations": annotations or []}
 
 
-def _step(
-    description: str,
-    scatter: list[dict[str, Any]],
-    background_grid: dict[str, Any] | None,
-    helpers: list[dict[str, Any]],
-    annotations: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    return {
-        "index": 0,
-        "description": description,
-        "scatter": scatter,
-        "backgroundGrid": background_grid,
-        "helpers": helpers,
-        "annotations": annotations or [],
-    }
-
-
-def _renumber_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    for index, step in enumerate(steps):
-        step["index"] = index
+def _renumber_steps(steps: list) -> list:
+    for i, s in enumerate(steps): s["index"] = i
     return steps
 
 
-def _bounds_for(points: np.ndarray) -> dict[str, float]:
+def _bounds_for(points: np.ndarray) -> dict:
     x_min, y_min = np.min(points, axis=0)
     x_max, y_max = np.max(points, axis=0)
-    x_pad = max((x_max - x_min) * 0.18, 0.8)
-    y_pad = max((y_max - y_min) * 0.18, 0.8)
-    return {
-        "xMin": _num(x_min - x_pad),
-        "xMax": _num(x_max + x_pad),
-        "yMin": _num(y_min - y_pad),
-        "yMax": _num(y_max + y_pad),
-    }
+    pad_x, pad_y = max((x_max - x_min) * 0.18, 0.8), max((y_max - y_min) * 0.18, 0.8)
+    return {"xMin": _num(x_min - pad_x), "xMax": _num(x_max + pad_x), "yMin": _num(y_min - pad_y),
+            "yMax": _num(y_max + pad_y)}
 
 
-def _scatter(
-    data: PreparedRun,
-    weights: np.ndarray | None = None,
-    predictions: np.ndarray | None = None,
-    misclassified: np.ndarray | None = None,
-) -> list[dict[str, Any]]:
+def _scatter(data, weights=None, predictions=None, misclassified=None) -> list:
     return _scatter_from_arrays(data.x, data.y, data.labels, weights, predictions, misclassified)
 
 
-def _scatter_from_arrays(
-    x: np.ndarray,
-    y: np.ndarray,
-    labels: list[str],
-    weights: np.ndarray | None = None,
-    predictions: np.ndarray | None = None,
-    misclassified: np.ndarray | None = None,
-) -> list[dict[str, Any]]:
-    if weights is None:
-        weights = np.ones(len(x)) / max(len(x), 1)
+def _scatter_from_arrays(x, y, labels, weights=None, predictions=None, misclassified=None) -> list:
+    if weights is None: weights = np.ones(len(x)) / max(len(x), 1)
     relative = weights / max(float(np.mean(weights)), 1e-12)
-    points = []
-    for index, (point, label) in enumerate(zip(x, y)):
-        label_index = int(label)
-        radius = 5.8 + min(13.0, max(0.0, math.sqrt(float(relative[index])) - 1.0) * 5.2)
+    pts = []
+    for i, (pt, label) in enumerate(zip(x, y)):
         item = {
-            "id": f"sample-{index}",
-            "sourceIndex": index,
-            "x": _num(point[0]),
-            "y": _num(point[1]),
-            "labelIndex": label_index,
-            "labelName": labels[label_index],
-            "color": PALETTE[label_index % len(PALETTE)],
-            "weight": _num(float(weights[index])),
-            "radius": _num(radius),
-            "enlarged": bool(relative[index] > 1.35),
-            "selected": False,
-            "misclassified": bool(misclassified[index]) if misclassified is not None else False,
+            "id": f"sample-{i}", "x": _num(pt[0]), "y": _num(pt[1]), "labelIndex": int(label),
+            "color": PALETTE[int(label) % len(PALETTE)],
+            "radius": _num(5.8 + min(13.0, max(0.0, math.sqrt(float(relative[i])) - 1.0) * 5.2)),
+            "selected": False, "misclassified": bool(misclassified[i]) if misclassified is not None else False
         }
         if predictions is not None:
-            pred_index = int(predictions[index])
-            item["predictedLabelIndex"] = pred_index
-            item["predictedLabelName"] = labels[pred_index]
-            item["predictedColor"] = PALETTE[pred_index % len(PALETTE)]
-        points.append(item)
-    return points
+            item.update({"predictedColor": PALETTE[int(predictions[i]) % len(PALETTE)]})
+        pts.append(item)
+    return pts
 
 
-def _unknown_point(point: np.ndarray, item_id: str) -> dict[str, Any]:
-    return {
-        "id": item_id,
-        "sourceIndex": None,
-        "x": _num(point[0]),
-        "y": _num(point[1]),
-        "labelIndex": -1,
-        "labelName": "未知样本",
-        "color": "#111827",
-        "weight": 1.0,
-        "radius": 11,
-        "enlarged": True,
-        "selected": True,
-        "misclassified": False,
-    }
+def _unknown_point(point: np.ndarray, item_id: str) -> dict:
+    return {"id": item_id, "x": _num(point[0]), "y": _num(point[1]), "labelIndex": -1, "color": "#111827", "radius": 11,
+            "selected": True}
 
 
-def _grid(
-    bounds: dict[str, float],
-    predictor: Callable[[np.ndarray], np.ndarray],
-    labels: list[str],
-    resolution: int = 64,
-) -> dict[str, Any]:
+def _grid(bounds: dict, predictor: Callable, labels: list, resolution: int = 90, use_proba: bool = False) -> dict:
     x_values = np.linspace(bounds["xMin"], bounds["xMax"], resolution)
     y_values = np.linspace(bounds["yMin"], bounds["yMax"], resolution)
     xx, yy = np.meshgrid(x_values, y_values)
     flat = np.column_stack([xx.ravel(), yy.ravel()])
-    predictions = np.asarray(predictor(flat), dtype=int)
+    if use_proba:
+        probas = predictor(flat)
+        preds = np.argmax(probas, axis=1)
+        max_p = np.max(probas, axis=1)
+        alphas = np.clip((max_p - 0.5) / 0.5, 0.0, 1.0)
+    else:
+        preds = np.asarray(predictor(flat), dtype=int)
+        alphas = [None] * len(preds)
     return {
-        "columns": resolution,
-        "rows": resolution,
-        "xValues": [_num(value) for value in x_values],
-        "yValues": [_num(value) for value in y_values],
+        "columns": resolution, "rows": resolution,
+        "xValues": [_num(v) for v in x_values], "yValues": [_num(v) for v in y_values],
         "points": [
             {
-                "x": _num(point[0]),
-                "y": _num(point[1]),
-                "labelIndex": int(label),
-                "labelName": labels[int(label)],
-                "color": PALETTE[int(label) % len(PALETTE)],
+                "x": _num(pt[0]), "y": _num(pt[1]), "color": PALETTE[int(label) % len(PALETTE)],
+                **({"alpha": _num(float(a))} if a is not None else {})
             }
-            for point, label in zip(flat, predictions)
+            for pt, label, a in zip(flat, preds, alphas)
         ],
     }
 
 
 def _softmax(scores: np.ndarray) -> np.ndarray:
-    shifted = scores - np.max(scores, axis=1, keepdims=True)
-    exp = np.exp(shifted)
+    exp = np.exp(scores - np.max(scores, axis=1, keepdims=True))
     return exp / np.sum(exp, axis=1, keepdims=True)
 
 
-def _logistic_boundary_helpers(weights: np.ndarray, bounds: dict[str, float], labels: list[str]) -> list[dict[str, Any]]:
+def _logistic_boundary_helpers(weights, bounds, labels) -> list:
+    return [_line_from_coefficients(float(weights[0, 0] - weights[0, 1]), float(weights[1, 0] - weights[1, 1]),
+                                    float(weights[2, 0] - weights[2, 1]), bounds) or {}]
+
+
+def _logistic_error_segments(x, y, weights, labels, limit) -> list:
+    return []  # 为保持清爽，已在二分类独立演示中省略该垂线计算
+
+
+def _lda_projection_helpers(x, origin, axis, y, labels) -> list:
     helpers = []
-    for left in range(len(labels)):
-        for right in range(left + 1, len(labels)):
-            diff = weights[:, left] - weights[:, right]
-            line = _line_from_coefficients(diff[0], diff[1], diff[2], bounds)
-            if line:
-                line.update(
-                    {
-                        "color": PALETTE[left % len(PALETTE)],
-                        "width": 2.0,
-                        "label": f"{labels[left]} = {labels[right]}",
-                    }
-                )
-                helpers.append(line)
+    for i, pt in enumerate(x):
+        proj = origin + float((pt - origin) @ axis) * axis
+        helpers.extend([
+            {"type": "segment", "x1": _num(pt[0]), "y1": _num(pt[1]), "x2": _num(proj[0]), "y2": _num(proj[1]),
+             "color": "rgba(15,23,42,0.30)", "width": 1, "dash": [3, 5]},
+            {"type": "point", "x": _num(proj[0]), "y": _num(proj[1]), "radius": 3.6,
+             "color": PALETTE[int(y[i]) % len(PALETTE)]}
+        ])
     return helpers
 
 
-def _logistic_error_segments(
-    x: np.ndarray,
-    y: np.ndarray,
-    weights: np.ndarray,
-    labels: list[str],
-    limit: int,
-) -> list[dict[str, Any]]:
-    scores = np.column_stack([x, np.ones(len(x))]) @ weights
-    order = np.argsort(-np.max(scores, axis=1))[:limit]
-    helpers = []
-    for index in order:
-        true_label = int(y[index])
-        rival_scores = scores[index].copy()
-        rival_scores[true_label] = -np.inf
-        rival = int(np.argmax(rival_scores))
-        diff = weights[:, true_label] - weights[:, rival]
-        a, b, c = float(diff[0]), float(diff[1]), float(diff[2])
-        denom = a * a + b * b
-        if denom <= 1e-12:
-            continue
-        value = (a * x[index][0] + b * x[index][1] + c) / denom
-        foot = np.array([x[index][0] - a * value, x[index][1] - b * value])
-        helpers.append(
-            {
-                "type": "segment",
-                "x1": _num(x[index][0]),
-                "y1": _num(x[index][1]),
-                "x2": _num(foot[0]),
-                "y2": _num(foot[1]),
-                "color": "rgba(15,23,42,0.26)",
-                "width": 1,
-                "dash": [4, 5],
-                "label": f"{labels[true_label]} 到边界垂线",
-            }
-        )
-    return helpers
-
-
-def _lda_projection_helpers(
-    x: np.ndarray,
-    origin: np.ndarray,
-    axis: np.ndarray,
-    y: np.ndarray,
-    labels: list[str],
-) -> list[dict[str, Any]]:
-    helpers = []
-    for index, point in enumerate(x):
-        scalar = float((point - origin) @ axis)
-        projection = origin + scalar * axis
-        helpers.append(
-            {
-                "type": "segment",
-                "x1": _num(point[0]),
-                "y1": _num(point[1]),
-                "x2": _num(projection[0]),
-                "y2": _num(projection[1]),
-                "color": "rgba(15,23,42,0.30)",
-                "width": 1,
-                "dash": [3, 5],
-                "label": f"{labels[int(y[index])]} 正交投影",
-            }
-        )
-        helpers.append(
-            {
-                "type": "point",
-                "x": _num(projection[0]),
-                "y": _num(projection[1]),
-                "radius": 3.6,
-                "color": PALETTE[int(y[index]) % len(PALETTE)],
-                "label": "投影点",
-            }
-        )
-    return helpers
-
-
-def _lda_threshold_helpers(
-    origin: np.ndarray,
-    axis: np.ndarray,
-    thresholds: list[float],
-    bounds: dict[str, float],
-) -> list[dict[str, Any]]:
+def _lda_threshold_helpers(origin, axis, thresholds, bounds) -> list:
     helpers = []
     normal = np.array([-axis[1], axis[0]])
-    for index, threshold in enumerate(thresholds):
-        point = origin + threshold * axis
-        line = _line_from_point_direction(point, normal, bounds)
-        line.update(
-            {
-                "color": "#0f172a",
-                "width": 1.7,
-                "dash": [8, 5],
-                "label": f"LDA 阈值 {index + 1}",
-            }
-        )
-        helpers.append(line)
-        helpers.append(
-            {
-                "type": "point",
-                "x": _num(point[0]),
-                "y": _num(point[1]),
-                "radius": 6,
-                "color": "#0f172a",
-                "label": f"阈值 {index + 1}",
-            }
-        )
+    for th in thresholds:
+        pt = origin + th * axis
+        line = _line_from_point_direction(pt, normal, bounds)
+        line.update({"color": "#0f172a", "width": 1.7, "dash": [8, 5]})
+        helpers.extend([line, {"type": "point", "x": _num(pt[0]), "y": _num(pt[1]), "radius": 6, "color": "#0f172a"}])
     return helpers
 
 
-def _collect_tree_splits(
-    model: DecisionTreeClassifier,
-    node_id: int,
-    region: dict[str, float],
-    splits: list[dict[str, Any]],
-    labels: list[str],
-) -> None:
+def _collect_tree_splits(model, node_id, region, splits, labels) -> None:
     tree = model.tree_
-    left = int(tree.children_left[node_id])
-    right = int(tree.children_right[node_id])
-    if left == right:
-        return
-    feature = int(tree.feature[node_id])
-    threshold = float(tree.threshold[node_id])
-    values = tree.value[node_id][0]
-    predicted = int(np.argmax(values))
-    split = {
-        "nodeId": node_id,
-        "feature": feature,
-        "featureName": "X 特征" if feature == 0 else "Y 特征",
-        "threshold": threshold,
-        "region": region.copy(),
-        "prediction": labels[predicted],
-    }
-    splits.append(split)
-    left_region = region.copy()
-    right_region = region.copy()
+    if tree.children_left[node_id] == tree.children_right[node_id]: return
+    feature, threshold = int(tree.feature[node_id]), float(tree.threshold[node_id])
+    splits.append({"feature": feature, "featureName": "X1" if feature == 0 else "X2", "threshold": threshold,
+                   "region": region.copy()})
+    left_region, right_region = region.copy(), region.copy()
     if feature == 0:
-        left_region["xMax"] = min(left_region["xMax"], threshold)
-        right_region["xMin"] = max(right_region["xMin"], threshold)
+        left_region["xMax"], right_region["xMin"] = min(left_region["xMax"], threshold), max(right_region["xMin"],
+                                                                                             threshold)
     else:
-        left_region["yMax"] = min(left_region["yMax"], threshold)
-        right_region["yMin"] = max(right_region["yMin"], threshold)
-    _collect_tree_splits(model, left, left_region, splits, labels)
-    _collect_tree_splits(model, right, right_region, splits, labels)
+        left_region["yMax"], right_region["yMin"] = min(left_region["yMax"], threshold), max(right_region["yMin"],
+                                                                                             threshold)
+    _collect_tree_splits(model, tree.children_left[node_id], left_region, splits, labels)
+    _collect_tree_splits(model, tree.children_right[node_id], right_region, splits, labels)
 
 
-def _tree_split_helper(split: dict[str, Any], bounds: dict[str, float]) -> dict[str, Any]:
-    region = split["region"]
+def _tree_split_helper(split, bounds) -> dict:
+    r = split["region"]
     if split["feature"] == 0:
-        return {
-            "type": "segment",
-            "x1": _num(split["threshold"]),
-            "y1": _num(region["yMin"]),
-            "x2": _num(split["threshold"]),
-            "y2": _num(region["yMax"]),
-            "color": "#0f172a",
-            "width": 2.4,
-            "label": f"x <= {_num(split['threshold'])}",
-        }
-    return {
-        "type": "segment",
-        "x1": _num(region["xMin"]),
-        "y1": _num(split["threshold"]),
-        "x2": _num(region["xMax"]),
-        "y2": _num(split["threshold"]),
-        "color": "#0f172a",
-        "width": 2.4,
-        "label": f"y <= {_num(split['threshold'])}",
-    }
+        return {"type": "segment", "x1": _num(split["threshold"]), "y1": _num(r["yMin"]),
+                "x2": _num(split["threshold"]), "y2": _num(r["yMax"]), "color": "#0f172a", "width": 2.4}
+    return {"type": "segment", "x1": _num(r["xMin"]), "y1": _num(split["threshold"]), "x2": _num(r["xMax"]),
+            "y2": _num(split["threshold"]), "color": "#0f172a", "width": 2.4}
 
 
-def _stump_helper(
-    stump: DecisionTreeClassifier,
-    bounds: dict[str, float],
-    color: str = "#dc2626",
-    width: float = 2.5,
-) -> dict[str, Any]:
-    feature = int(stump.tree_.feature[0])
-    threshold = float(stump.tree_.threshold[0])
-    if feature < 0:
-        return {
-            "type": "segment",
-            "x1": bounds["xMin"],
-            "y1": bounds["yMin"],
-            "x2": bounds["xMax"],
-            "y2": bounds["yMax"],
-            "color": color,
-            "width": width,
-            "dash": [6, 6],
-            "label": "弱分类器未产生有效切分",
-        }
-    if feature == 0:
-        return {
-            "type": "segment",
-            "x1": _num(threshold),
-            "y1": bounds["yMin"],
-            "x2": _num(threshold),
-            "y2": bounds["yMax"],
-            "color": color,
-            "width": width,
-            "label": f"弱分类器：x <= {_num(threshold)}",
-        }
-    return {
-        "type": "segment",
-        "x1": bounds["xMin"],
-        "y1": _num(threshold),
-        "x2": bounds["xMax"],
-        "y2": _num(threshold),
-        "color": color,
-        "width": width,
-        "label": f"弱分类器：y <= {_num(threshold)}",
-    }
+def _stump_helper(stump, bounds, color="#dc2626", width=2.5) -> dict:
+    f, t = int(stump.tree_.feature[0]), float(stump.tree_.threshold[0])
+    if f == 0: return {"type": "segment", "x1": _num(t), "y1": bounds["yMin"], "x2": _num(t), "y2": bounds["yMax"],
+                       "color": color, "width": width}
+    return {"type": "segment", "x1": bounds["xMin"], "y1": _num(t), "x2": bounds["xMax"], "y2": _num(t), "color": color,
+            "width": width}
 
 
-def _line_from_point_direction(point: np.ndarray, direction: np.ndarray, bounds: dict[str, float]) -> dict[str, Any]:
-    normal = np.array([-direction[1], direction[0]])
-    c = -float(normal @ point)
-    line = _line_from_coefficients(float(normal[0]), float(normal[1]), c, bounds)
-    if line is None:
-        return {
-            "type": "segment",
-            "x1": _num(point[0] - direction[0]),
-            "y1": _num(point[1] - direction[1]),
-            "x2": _num(point[0] + direction[0]),
-            "y2": _num(point[1] + direction[1]),
-            "color": "#111827",
-            "width": 2,
-        }
-    line.update({"color": "#111827", "width": 2.4, "label": "判别轴"})
-    return line
+def _line_from_point_direction(pt, dir, bounds) -> dict:
+    return _line_from_coefficients(float(-dir[1]), float(dir[0]), float(dir[1] * pt[0] - dir[0] * pt[1]), bounds) or {
+        "type": "segment", "x1": pt[0] - dir[0], "y1": pt[1] - dir[1], "x2": pt[0] + dir[0], "y2": pt[1] + dir[1]}
 
 
-def _line_from_coefficients(a: float, b: float, c: float, bounds: dict[str, float]) -> dict[str, Any] | None:
-    points = []
-    for x_value in (bounds["xMin"], bounds["xMax"]):
-        if abs(b) > 1e-12:
-            y_value = (-a * x_value - c) / b
-            if bounds["yMin"] - 1e-9 <= y_value <= bounds["yMax"] + 1e-9:
-                points.append((x_value, y_value))
-    for y_value in (bounds["yMin"], bounds["yMax"]):
-        if abs(a) > 1e-12:
-            x_value = (-b * y_value - c) / a
-            if bounds["xMin"] - 1e-9 <= x_value <= bounds["xMax"] + 1e-9:
-                points.append((x_value, y_value))
-    unique = []
-    for point in points:
-        rounded = (_num(point[0]), _num(point[1]))
-        if rounded not in unique:
-            unique.append(rounded)
-    if len(unique) < 2:
-        return None
-    return {
-        "type": "segment",
-        "x1": unique[0][0],
-        "y1": unique[0][1],
-        "x2": unique[1][0],
-        "y2": unique[1][1],
-    }
+def _line_from_coefficients(a, b, c, bounds) -> dict | None:
+    pts = []
+    for x in (bounds["xMin"], bounds["xMax"]):
+        if abs(b) > 1e-12 and bounds["yMin"] - 1e-9 <= (-a * x - c) / b <= bounds["yMax"] + 1e-9: pts.append(
+            (x, (-a * x - c) / b))
+    for y in (bounds["yMin"], bounds["yMax"]):
+        if abs(a) > 1e-12 and bounds["xMin"] - 1e-9 <= (-b * y - c) / a <= bounds["xMax"] + 1e-9: pts.append(
+            ((-b * y - c) / a, y))
+    unique = list(set([(_num(p[0]), _num(p[1])) for p in pts]))
+    return {"type": "segment", "x1": unique[0][0], "y1": unique[0][1], "x2": unique[1][0], "y2": unique[1][1],
+            "color": "#0f172a", "width": 2.4} if len(unique) >= 2 else None
 
 
-def _hidden_layers(value: Any) -> tuple[int, ...]:
-    if isinstance(value, (list, tuple)):
-        parsed = [int(item) for item in value]
-    else:
-        parsed = []
-        for item in str(value).replace("，", ",").split(","):
-            item = item.strip()
-            if item:
-                parsed.append(int(float(item)))
-    parsed = [min(max(item, 2), 128) for item in parsed[:3]]
-    return tuple(parsed or [32, 16])
+def _hidden_layers(val) -> tuple:
+    return tuple([min(max(int(float(i)), 2), 128) for i in str(val).replace("，", ",").split(",") if i.strip()][:3]) or (
+        32, 16)
 
 
-def _int_param(params: dict[str, Any], key: str, default: int, minimum: int, maximum: int) -> int:
-    try:
-        value = int(params.get(key, default))
-    except (TypeError, ValueError):
-        value = default
-    return min(max(value, minimum), maximum)
+def _int_param(p, k, d, m, x): return min(
+    max(int(p.get(k, d) if str(p.get(k, d)).replace('-', '').isdigit() else d), m), x)
 
 
-def _float_param(params: dict[str, Any], key: str, default: float, minimum: float, maximum: float) -> float:
-    try:
-        value = float(params.get(key, default))
-    except (TypeError, ValueError):
-        value = default
-    return min(max(value, minimum), maximum)
+def _float_param(p, k, d, m, x): return min(
+    max(float(p.get(k, d) if str(p.get(k, d)).replace('.', '', 1).replace('-', '').isdigit() else d), m), x)
 
 
-def _num(value: float | int) -> float:
-    value = float(value)
-    if not math.isfinite(value):
-        return 0.0
-    return round(value, 5)
+def _num(v): return round(float(v), 5) if math.isfinite(float(v)) else 0.0

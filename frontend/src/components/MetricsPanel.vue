@@ -90,5 +90,33 @@ function formatMetric(metric) {
         </table>
       </div>
     </div>
+
+    <div class="sub-panel table-panel">
+      <h3>预测表现样例</h3>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>样本</th>
+              <th>真实类别</th>
+              <th>预测类别</th>
+              <th>置信度</th>
+              <th>结果</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in result.charts.predictions" :key="item.sample">
+              <td>{{ item.sample }}</td>
+              <td>{{ item.actual }}</td>
+              <td>{{ item.predicted }}</td>
+              <td>{{ item.confidence === null ? "-" : `${(item.confidence * 100).toFixed(2)}%` }}</td>
+              <td :class="item.correct ? 'prediction-ok' : 'prediction-bad'">
+                {{ item.correct ? "正确" : "错误" }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </section>
 </template>

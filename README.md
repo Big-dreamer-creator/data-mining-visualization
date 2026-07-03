@@ -48,20 +48,31 @@
 
 ## 🚀 启动指南
 
-### 后端：uv + 项目虚拟环境
+### 后端：uv
 
 ```bash
 cd backend
 uv venv
 uv pip install -r requirements.txt
-.venv\Scripts\python scripts\download_datasets.py
-.venv\Scripts\uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uv run python scripts/download_datasets.py
+uv run main
+```
+
+### 后端：无 uv
+
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python scripts/download_datasets.py
+python main.py
 ```
 
 后端接口文档启动后访问：
 
 ```text
-http://localhost:8000/docs
+http://localhost:8001/docs
 ```
 
 ### 前端：bun

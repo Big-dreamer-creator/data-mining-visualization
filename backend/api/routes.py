@@ -1,19 +1,23 @@
-from typing import Any
+from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from core.frame_algorithms import ALGORITHMS, run_algorithm
 from core.datasets import DATASETS, ensure_dataset_files, get_dataset_summary
-
+from core.evaluation import evaluate_algorithm
 
 router = APIRouter()
 
 
 class AlgorithmRunRequest(BaseModel):
-    dataset_id: str = Field("iris", alias="datasetId")
-    feature_indices: list[int] | None = Field(None, alias="featureIndices")
-    hyperparameters: dict[str, Any] = Field(default_factory=dict)
+    pattern: str = "blobs"
+    hyperparameters: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AlgorithmEvaluationRequest(BaseModel):
+    datasetId: str = "iris"
+    hyperparameters: Dict[str, Any] = Field(default_factory=dict)
 
 
 @router.get("/health")
@@ -57,23 +61,36 @@ def get_dataset(dataset_id: str):
     return get_dataset_summary(dataset_id, include_preview=True)
 
 
-@router.post("/algorithms/{algorithm_id}/run")
-def run_algorithm_endpoint(
-    algorithm_id: str,
-    payload: AlgorithmRunRequest,
-):
+@router.post("/algorithms/{algorithm_id}/visualization")
+def run_visualization_endpoint(algorithm_id: str, payload: AlgorithmRunRequest):
     if algorithm_id not in ALGORITHMS:
         raise HTTPException(status_code=404, detail="Algorithm not found")
-    dataset_id = payload.dataset_id
-    if dataset_id not in DATASETS:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    ensure_dataset_files()
     try:
         return run_algorithm(
             algorithm_id,
-            dataset_id,
-            feature_indices=payload.feature_indices,
+            pattern=payload.pattern,
             hyperparameters=payload.hyperparameters,
         )
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@router.post("/algorithms/{algorithm_id}/evaluate")
+def evaluate_algorithm_endpoint(algorithm_id: str, payload: AlgorithmEvaluationRequest):
+    if algorithm_id not in ALGORITHMS:
+        raise HTTPException(status_code=404, detail="Algorithm not found")
+    if payload.datasetId not in DATASETS:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    try:
+        return evaluate_algorithm(
+            algorithm_id,
+            dataset_id=payload.datasetId,
+            hyperparameters=payload.hyperparameters,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@router.post("/algorithms/{algorithm_id}/run")
+def run_algorithm_endpoint(algorithm_id: str, payload: AlgorithmRunRequest):
+    return run_visualization_endpoint(algorithm_id, payload)
